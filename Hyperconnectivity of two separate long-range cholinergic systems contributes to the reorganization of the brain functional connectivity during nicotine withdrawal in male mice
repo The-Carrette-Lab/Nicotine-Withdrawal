@@ -1,0 +1,553 @@
+#libraries for reading and writing
+library(readr) #csv files 
+library(writexl)
+#libraries for modifying data
+library(tidyverse)  ## includes library(forcats), library(dplyr) #(join), library(ggplot2) #graph 
+library(purrr) #reduce
+library(reshape2) #melting 
+library(magrittr) #piping %>%
+#libraries for objects, graphing etc
+library(dendextend) #create dendrogram object 
+library(gplots) #for heatmap2
+library(ggpubr)  #for ggbarplot 
+library(ComplexHeatmap)
+library(RColorBrewer) #making colors 
+#libraries for stats
+#library(rstatix)
+#library(Hmisc) # p values for correlation
+#network analysis
+library(igraph)
+
+##Initial cleaning of received dataframes, no calculations
+setwd("redacted")
+
+nic_raw <- read_csv("nic.csv")
+regionswithabbr<- nic_raw[,1:2]
+nic <- nic_raw[,-2]
+nic_t <- nic
+nic <- t(nic)
+colnames <- nic[1,]
+regions <- colnames
+nic <- nic[-1,]
+nic <- as.integer(nic)
+dim(nic) <- c(5,175)
+colnames(nic) <- colnames
+nic <- as.data.frame(nic)
+nic_long <- melt(nic)
+colnames(nic_long) <- c("Region", "value")
+nic_long$treatment <- "nicotine"
+nic_wide <- nic
+nic_wide$treatment <- "nicotine"
+
+sal_raw <- read_csv("sal.csv")
+sal <- sal_raw[,-2]
+sal_t <- sal
+sal <- t(sal)
+colnames(sal) <- sal[1,]
+sal <- sal[-1,]
+sal <- as.integer(sal)
+dim(sal) <- c(4,175)
+colnames(sal) <- colnames
+sal <- as.data.frame(sal)
+sal_long <- melt(sal)
+colnames(sal_long) <- c("Region", "value")
+sal_long$treatment <- "saline"
+sal_wide <- sal
+sal_wide$treatment <- "saline"
+
+group <- read_csv("ordered_groups.csv")
+abbreviations <- select(nic_raw, region, Abbreviations)
+info <- left_join(abbreviations, group)
+
+setwd("redacted")
+
+#####Figure 1: hierarchically clustered correlation heatmaps and graphs
+####heatmaps
+corr_mx_sal <- round(cor(log10(sal+1)),2)
+corr_mx_nic <- round(cor(log10(nic+1)),2)
+dist_mx_sal <- dist(corr_mx_sal)
+dist_mx_nic <- dist(corr_mx_nic)
+coul <- colorRampPalette(brewer.pal(8, "Spectral"))(25)
+coul_other <- rev(colorRampPalette(brewer.pal(8, "Spectral"))(25)) 
+pdf(file = "Fig1B.pdf", width = 10, height = 10)
+hm_sal <- heatmap.2(as.matrix(corr_mx_sal), cexRow = 0.1, cexCol = 0.1, col = coul_other, trace = "none", density.info = "none")
+dev.off()
+pdf(file = "Fig1C.pdf", width = 10, height = 10)
+hm_nic <- heatmap.2(as.matrix(corr_mx_nic), cexRow = 0.1, cexCol = 0.1, col = coul_other, trace = "none", density.info = "none")
+dev.off()
+
+hc_sal <- as.hclust( hm_sal$rowDendrogram )
+hc_nic <- as.hclust( hm_nic$rowDendrogram )
+modules_nic <- cutree(as.dendrogram(hc_nic), h=max(hc_nic$height)/2)
+modules_nic <- data.frame(region = names(modules_nic), module = modules_nic)
+modules_sal <- cutree(as.dendrogram(hc_sal), h=max(hc_sal$height)/2)
+modules_sal <- data.frame(region = names(modules_sal), module = modules_sal)
+
+####graphs
+library(igraph)
+thres_corr_mx_sal <- corr_mx_sal
+thres_corr_mx_nic <- corr_mx_nic
+diag(thres_corr_mx_sal) <- 0
+diag(thres_corr_mx_nic) <- 0
+thres_corr_mx_sal[thres_corr_mx_sal <= 0.75] <- 0
+thres_corr_mx_nic[thres_corr_mx_nic <= 0.75] <- 0
+weigh_el_sal <- get.data.frame(graph.adjacency(thres_corr_mx_sal, weighted = TRUE))
+weigh_el_nic <- get.data.frame(graph.adjacency(thres_corr_mx_nic, weighted = TRUE))
+edges_sal <- dplyr::rename(weigh_el_sal, region = from)
+edges_nic <- dplyr::rename(weigh_el_nic, region = from)
+edges_sal <- left_join(edges_sal, info)
+edges_nic <- left_join(edges_nic, info)
+edges_sal <- dplyr::rename(edges_sal, Source = Abbreviations, region = to, Source_full = region)
+edges_nic <- dplyr::rename(edges_nic, Source = Abbreviations, region = to, Source_full = region)
+edges_sal <- left_join(edges_sal, info, by = "region")
+edges_nic <- left_join(edges_nic, info, by = "region")
+edges_sal <- dplyr::rename(edges_sal, Target = Abbreviations, Target_full = region, Weight = weight)
+edges_nic <- dplyr::rename(edges_nic, Target = Abbreviations, Target_full = region, Weight = weight)
+edges_sal$Source <- as.factor(edges_sal$Source)
+edges_nic$Source <- as.factor(edges_nic$Source)
+edges_sal_s <- select(edges_sal,Source, Target, Weight)
+edges_nic_s <- select(edges_nic,Source, Target, Weight)
+
+vertices_sal <- as.data.frame(levels(as.factor(edges_sal$Source)))
+vertices_nic <- as.data.frame(levels(as.factor(edges_nic$Source)))
+vertices_sal <- dplyr::rename(vertices_sal, Abbreviations = "levels(as.factor(edges_sal$Source))")
+vertices_nic <- dplyr::rename(vertices_nic, Abbreviations = "levels(as.factor(edges_nic$Source))")
+vertices_sal <- left_join(vertices_sal, info)
+vertices_nic <- left_join(vertices_nic, info)
+vertices_sal <- dplyr::rename(vertices_sal, Source = Abbreviations)
+vertices_nic <- dplyr::rename(vertices_nic, Source = Abbreviations)
+vertices_sal$Source <- as.factor(vertices_sal$Source)
+vertices_nic$Source <- as.factor(vertices_nic$Source)
+vertices_sal <- left_join(vertices_sal, modules_sal)
+vertices_sal$Ch <- "no"
+vertices_sal$Ch[vertices_sal$Source == "MS" | vertices_sal$Source == "MH" |vertices_sal$Source == "LH" |vertices_sal$Source == "MA" |vertices_sal$Source == "SI" |vertices_sal$Source == "NDB" |vertices_sal$Source == "PPN" ] <- "Ch"
+vertices_nic <- left_join(vertices_nic, modules_nic)
+vertices_nic$Ch <- "no"
+vertices_nic$Ch[vertices_nic$Source == "MS" | vertices_nic$Source == "MH" |vertices_nic$Source == "LH" |vertices_nic$Source == "MA" |vertices_nic$Source == "SI" |vertices_nic$Source == "NDB" |vertices_nic$Source == "PPN" ] <- "Ch"
+
+vertices_sal$color <- NA
+vertices_sal$color[vertices_sal$module == 1] <- "#E5A024"  #ordered from right 1
+vertices_sal$color[vertices_sal$module == 2] <- "#0073B2"  #5
+vertices_sal$color[vertices_sal$module == 3] <- "#264393"  #10
+vertices_sal$color[vertices_sal$module == 4] <- "#ED1C24"  #6
+vertices_sal$color[vertices_sal$module == 5] <- "#5AB4E5"  #4
+vertices_sal$color[vertices_sal$module == 6] <- "#009E73"  #2  
+vertices_sal$color[vertices_sal$module == 7] <- "#00A8B2"  #7
+vertices_sal$color[vertices_sal$module == 8] <- "#F0E442"  #3
+vertices_sal$color[vertices_sal$module == 9] <- "#27663E"  #11
+vertices_sal$color[vertices_sal$module == 10] <- "#231F20" #13
+vertices_sal$color[vertices_sal$module == 11] <- "#EC008C" #9
+vertices_sal$color[vertices_sal$module == 12] <- "#6E517E" #8
+vertices_sal$color[vertices_sal$module == 13] <- "#808285" #12
+
+vertices_nic$color <- NA
+vertices_nic$color[vertices_nic$module == 1] <- "#E5A024" #1
+vertices_nic$color[vertices_nic$module == 2] <- "#ED1C24" #6
+vertices_nic$color[vertices_nic$module == 3] <- "#F0E442" #3
+vertices_nic$color[vertices_nic$module == 4] <- "#6E517E" #8
+vertices_nic$color[vertices_nic$module == 5] <- "#EC008C" #9
+vertices_nic$color[vertices_nic$module == 6] <- "#009E73" #2
+vertices_nic$color[vertices_nic$module == 7] <- "#00A8B2" #7
+vertices_nic$color[vertices_nic$module == 8] <- "#5AB4E5" #4
+vertices_nic$color[vertices_nic$module == 9] <- "#0073B2" #5
+
+net_sal <- graph_from_data_frame(d=edges_sal_s, vertices = vertices_sal, directed = F)
+net_nic <- graph_from_data_frame(d=edges_nic_s, vertices = vertices_nic, directed = F)
+
+V(net_sal)$ID <- vertices_sal$Source
+V(net_sal)$module <- vertices_sal$module
+V(net_sal)$Ch <- vertices_sal$Ch
+V(net_sal)$color <- vertices_sal$color
+V(net_sal)$bordercolor <- ifelse(vertices_sal$Ch == "Ch", "red", "grey")
+E(net_sal)$weight <- edges_sal_s$Weight
+
+
+V(net_nic)$ID <- vertices_nic$Source
+V(net_nic)$module <- vertices_nic$module
+V(net_nic)$Ch <- vertices_nic$Ch
+V(net_nic)$color <- vertices_nic$color
+V(net_nic)$bordercolor <- ifelse(V(net_nic)$Ch == "Ch", "red", "grey")
+E(net_nic)$weight <- edges_nic_s$Weight
+
+col_border<-c("red", "darkgrey")
+deg <- degree(net_sal)
+deg <- degree(net_nic)
+
+pdf(file = "Fig1D.pdf", width = 10, height = 10)
+plot(net_sal, vertex.color = vertices_sal$color, vertex.frame.color = col_border[(as.factor(V(net_sal)$Ch))], vertex.size = deg*0.05, vertex.label.color="black" ,edge.width=seq(1,5) ,layout = layout_with_fr, vertex.label.cex=0.3)
+dev.off()
+pdf(file = "Fig1E.pdf", width = 10, height = 10)
+plot(net_nic, vertex.color = vertices_nic$color, vertex.frame.color = col_border[as.numeric(as.factor(V(net_nic)$Ch))], vertex.size = deg*0.05, vertex.label.color="black" ,edge.width=seq(1,5) ,layout = layout_with_fr, vertex.label.cex=0.3)
+dev.off()
+
+pdf(file = "Fig1D_no label.pdf", width = 10, height = 10)
+plot(net_sal, vertex.color = vertices_sal$color, vertex.frame.color = col_border[(as.factor(V(net_sal)$Ch))], vertex.size = deg*0.05,edge.width=seq(1,5) ,layout = layout_with_fr, vertex.label=NA)
+dev.off()
+pdf(file = "Fig1E_no label.pdf", width = 10, height = 10)
+plot(net_nic, vertex.color = vertices_nic$color, vertex.frame.color = col_border[as.numeric(as.factor(V(net_nic)$Ch))], vertex.size = deg*0.05, edge.width=seq(1,5) ,layout = layout_with_fr, vertex.label=NA)
+dev.off()
+
+
+#####Figure 2: Zoom in on correlations
+library(Cairo)
+library(ComplexHeatmap)
+group = info$group
+group = as.factor(group)
+group <- factor(group, levels = c("Cortical Plate", "Cortical Subplate", "Striatum", "Pallidum", "Thalamus", "Hypothalamus", "Midbrain", "Hindbrain", "Cerebellum"))
+
+###just Ch1-8
+data_corr_mx_sal <- as.data.frame(as.matrix(corr_mx_sal))
+select_ch_corr_mx_sal <- data_corr_mx_sal[c("Medial septal nucleus", "Diagonal band nucleus", "Substantia innominata", "Magnocellular nucleus", "Pedunculopontine nucleus", "Medial habenula", "Lateral habenula"),c("Medial septal nucleus", "Diagonal band nucleus", "Substantia innominata", "Magnocellular nucleus", "Pedunculopontine nucleus", "Medial habenula", "Lateral habenula")]
+data_corr_mx_nic <- as.data.frame(as.matrix(corr_mx_nic))
+select_ch_corr_mx_nic <- data_corr_mx_nic[c("Medial septal nucleus", "Diagonal band nucleus", "Substantia innominata", "Magnocellular nucleus", "Pedunculopontine nucleus", "Medial habenula", "Lateral habenula"),c("Medial septal nucleus", "Diagonal band nucleus", "Substantia innominata", "Magnocellular nucleus", "Pedunculopontine nucleus", "Medial habenula", "Lateral habenula")]
+
+pdf(file = "Fig2B_sal.pdf", height =2.75, width = 3)
+Heatmap(as.matrix(select_ch_corr_mx_sal), name = "sal", col = coul_other, heatmap_legend_param = list(at = c(1, 0, -1)), row_order = c("Medial septal nucleus", "Pedunculopontine nucleus", "Medial habenula", "Lateral habenula", "Magnocellular nucleus", "Diagonal band nucleus", "Substantia innominata"), column_order = c("Medial septal nucleus", "Pedunculopontine nucleus", "Medial habenula", "Lateral habenula", "Magnocellular nucleus", "Diagonal band nucleus", "Substantia innominata"), row_names_gp = gpar(fontsize = 5),  column_names_gp = gpar(fontsize = 3), row_title_gp = gpar(fontsize = 5), column_title_gp = gpar(fontsize = 5))
+dev.off()
+pdf(file = "Fig2B_nic.pdf", height =2.75, width = 3)
+Heatmap(as.matrix(select_ch_corr_mx_nic), name = "nic", col = coul_other, heatmap_legend_param = list(at = c(1, 0, -1)), clustering_method_rows = "complete", clustering_method_columns = "complete", row_names_gp = gpar(fontsize = 5),  column_names_gp = gpar(fontsize = 3), row_title_gp = gpar(fontsize = 5), column_title_gp = gpar(fontsize = 5))
+dev.off()
+
+write.csv(data_corr_mx_sal, "data_corr_mx_sal.csv")
+write.csv(data_corr_mx_nic, "data_corr_mx_nic.csv")
+write.csv(select_ch_corr_mx_sal, "select_ch_corr_mx_sal.csv")
+write.csv(select_ch_corr_mx_nic, "select_ch_corr_mx_nic.csv")
+
+###Correlations CH1-8 with brain
+data_corr_mx_sal <- as.data.frame(as.matrix(corr_mx_sal))
+select_corr_mx_sal <- data_corr_mx_sal[c("Medial septal nucleus", "Diagonal band nucleus", "Substantia innominata", "Magnocellular nucleus", "Pedunculopontine nucleus", "Medial habenula", "Lateral habenula"),]
+data_corr_mx_nic <- as.data.frame(as.matrix(corr_mx_nic))
+select_corr_mx_nic <- data_corr_mx_nic[c("Medial septal nucleus", "Diagonal band nucleus", "Substantia innominata", "Magnocellular nucleus", "Pedunculopontine nucleus", "Medial habenula", "Lateral habenula"),]
+
+hc_nic_ch <- Heatmap(as.matrix(select_corr_mx_nic), name = "nic", col = coul_other, heatmap_legend_param = list(at = c(1, 0, -1)), row_order = c( "Medial septal nucleus", "Pedunculopontine nucleus", "Medial habenula", "Lateral habenula", "Magnocellular nucleus", "Substantia innominata", "Diagonal band nucleus"  ), clustering_method_columns = "complete",  column_split = group, cluster_column_slices = F, row_names_gp = gpar(fontsize = 5),  column_names_gp = gpar(fontsize = 3), row_title_gp = gpar(fontsize = 5), column_title_gp = gpar(fontsize = 5))
+rows_region_select <- row_order(hc_nic_ch)
+rows_region_select <- unlist(rows_region_select)
+columns_region_select <- column_order(hc_nic_ch)
+columns_region_select <- unlist(columns_region_select)
+hc_sal_ch <- Heatmap(as.matrix(select_corr_mx_sal), name = "sal", col = coul_other, heatmap_legend_param = list(at = c(1, 0, -1)), row_order = rows_region_select, column_order = columns_region_select, column_split = group, cluster_column_slices = F, row_names_gp = gpar(fontsize = 5),  column_names_gp = gpar(fontsize = 3), row_title_gp = gpar(fontsize = 5), column_title_gp = gpar(fontsize = 5))
+hc_nicsal_ch <- hc_sal_ch %v% hc_nic_ch
+pdf(file = "Fig2E.pdf", height =2.75, width = 10)
+hc_nicsal_ch
+dev.off()
+
+###for minimal network
+edges_sal_select <- filter(edges_sal, Source == "MS"|Source == "NDB"|Source ==  "MA"|Source ==  "PPN"|Source ==  "IPN"|Source ==  "VTA"|Source == "ACAd"|Source ==  "ACAv"|Source ==   "ILA"|Source ==  "PL"|Source ==  "DP"|Source ==  "MH"|Source ==  "CP"|Source ==  "ACB"|Source ==  "SI" |Source ==  "LH" | Source == "BLA" | Source == "CEA" | Source == "BST")
+edges_nic_select  <- filter(edges_nic, Source == "MS"|Source == "NDB"|Source ==  "MA"|Source ==  "PPN"|Source ==  "IPN"|Source ==  "VTA"|Source == "ACAd"|Source ==  "ACAv"|Source ==   "ILA"|Source ==  "PL"|Source ==  "DP"|Source ==  "MH"|Source ==  "CP"|Source ==  "ACB"|Source ==  "SI"|Source ==  "LH"|  Source == "BLA" |Source == "CEA" | Source == "BST")
+edges_sal_select <- filter(edges_sal_select, Target == "MS"|Target == "NDB"|Target ==  "MA"|Target ==  "PPN"|Target ==  "IPN"|Target ==  "VTA"|Target == "ACAd"|Target ==  "ACAv"|Target ==   "ILA"|Target ==  "PL"|Target ==  "DP"|Target ==  "MH"|Target ==  "CP"|Target ==  "ACB"|Target ==  "SI"|Target ==  "LH"| Target == "BLA" |Target == "CEA" | Target == "BST")
+edges_nic_select  <- filter(edges_nic_select, Target == "MS"|Target == "NDB"|Target ==  "MA"|Target ==  "PPN"|Target ==  "IPN"|Target ==  "VTA"|Target == "ACAd"|Target ==  "ACAv"|Target ==   "ILA"|Target ==  "PL"|Target ==  "DP"|Target ==  "MH"|Target ==  "CP"|Target ==  "ACB"|Target ==  "SI"|Target ==  "LH"| Target == "BLA" |Target == "CEA" | Target == "BST")
+write.csv(edges_sal_select, "edges_sal_select.csv", row.names=FALSE)
+write.csv(edges_nic_select, "edges_nic_select.csv", row.names=FALSE)
+
+nodes_sal_select  <- filter(vertices_sal, Source == "MS"|Source == "NDB"|Source ==  "MA"|Source ==  "PPN"||Source ==  "IPN"|Source ==  "VTA"|Source == "ACAd"|Source ==  "ACAv"|Source ==   "ILA"|Source ==  "PL"|Source ==  "DP"|Source ==  "MH"|Source ==  "CP"|Source ==  "ACB"|Source ==  "SI"|Source ==  "LH"| Source == "BLA" |Source == "CEA" | Source == "BST")
+nodes_nic_select  <- filter(vertices_nic, Source == "MS"|Source == "NDB"|Source ==  "MA"|Source ==  "PPN"|Source ==  "IPN"|Source ==  "VTA"|Source == "ACAd"|Source ==  "ACAv"|Source ==   "ILA"|Source ==  "PL"|Source ==  "DP"|Source ==  "MH"|Source ==  "CP"|Source ==  "ACB"|Source ==  "SI"|Source ==  "LH" | Source == "BLA" |Source == "CEA" | Source == "BST")
+write.csv(nodes_sal_select, "nodes_sal_select.csv", row.names=FALSE)
+write.csv(nodes_nic_select, "nodes_nic_select.csv", row.names=FALSE)
+
+
+
+#####Figure 3: networkproperties
+degree_sal <- as.data.frame(degree(net_sal))
+colnames(degree_sal) <- "degree"
+degree_sal <- tibble::rownames_to_column(degree_sal, "region")
+degree_sal$treat <- "saline"
+degree_nic <- as.data.frame(degree(net_nic))
+colnames(degree_nic) <- "degree"
+degree_nic <- tibble::rownames_to_column(degree_nic, "region")
+degree_nic$treat <- "nicotine"
+degree<- rbind(degree_sal, degree_nic)
+ggbarplot(degree, x = "treat", y = "degree",  add = c("mean_se", "jitter")) + labs(x="", y="degree")
+ggsave("Fig3A.pdf")
+
+betweenness_sal <- as.data.frame(betweenness(net_sal, directed=F))
+colnames(betweenness_sal) <- "betweenness"
+betweenness_sal <- tibble::rownames_to_column(betweenness_sal, "region")
+betweenness_sal$treat <- "saline"
+betweenness_nic <- as.data.frame(betweenness(net_nic, directed=F))
+colnames(betweenness_nic) <- "betweenness"
+betweenness_nic <- tibble::rownames_to_column(betweenness_nic, "region")
+betweenness_nic$treat <- "nicotine"
+betweenness<- rbind(betweenness_sal, betweenness_nic)
+
+#Proces in Python (brain toolbox to get PCs)
+brain_regions_sal <- colnames(corr_mx_sal)
+brain_regions_nic <- colnames(corr_mx_nic)
+PC_sal <- read_csv("PC_sal.csv", col_names = F) 
+PC_nic <- read_csv("PC_nic.csv", col_names = F) 
+colnames(PC_sal) <- "PC"
+colnames(PC_nic) <- "PC"
+PC_sal <- mutate(PC_sal, region = brain_regions_sal)
+PC_nic <- mutate(PC_nic, region = brain_regions_nic)
+
+colnames(degree_sal) <- c("Abbreviations", "degree", "treat")
+colnames(betweenness_sal) <- c("Abbreviations", "betweenness", "treat")
+colnames(degree_nic) <- c("Abbreviations", "degree", "treat")
+colnames(betweenness_nic) <- c("Abbreviations", "betweenness", "treat")
+nic_hubs <- full_join(PC_nic,info)
+nic_hubs <- full_join(nic_hubs,degree_nic)
+nic_hubs <- full_join(nic_hubs,betweenness_nic)
+sal_hubs <- full_join(PC_sal,info)
+sal_hubs <- full_join(sal_hubs,degree_sal)
+sal_hubs <- full_join(sal_hubs,betweenness_sal)
+
+hubs <- rbind(sal_hubs, nic_hubs)
+hubs <- select(hubs, region, Abbreviations, PC, degree, betweenness, treat, group)
+hubs[is.na(hubs$treat),]$treat <- "nicotine"
+hubs <- na.omit(hubs)
+hubs_long <- gather(hubs, measure, value, PC:betweenness, factor_key=TRUE)
+hubs_long_MS_FS <- subset(hubs, Abbreviations == "MS" | Abbreviations == "FS")
+hub_averages <- hubs %>% dplyr::group_by(treat) %>% summarise(n = n(), Mean_PC = mean(PC), SD_PC=sd(PC), SE_PC = sd(PC)/sqrt(n()),Mean_degree = mean(degree), SD_degree=sd(degree), SE_degree = sd(degree)/sqrt(n()), Mean_betweenness = mean(betweenness), SD_betweenness=sd(betweenness), SE_betweenness = sd(betweenness)/sqrt(n()))
+write.csv(hub_averages, "hub_averages.csv")
+
+ggbarplot(hubs, x = "treat", y = "PC",  add = c("mean_se", "jitter")) + labs(x="", y="PC") + geom_text(data=subset(hubs, Abbreviations == "MS" | Abbreviations == "FS"), aes(label=Abbreviations)) + geom_point(data=subset(hubs, Abbreviations == "MS" | Abbreviations == "FS"), aes(col="red"))
+ggsave("Fig3C.pdf")
+ggbarplot(hubs, x = "treat", y = "betweenness",  add = c("mean_se", "jitter")) + labs(x="", y="Betweenness") + geom_text(data=subset(hubs, Abbreviations == "MS" | Abbreviations == "FS"), aes(label=Abbreviations)) + geom_point(data=subset(hubs, Abbreviations == "MS" | Abbreviations == "FS"), aes(col="red"))
+ggsave("Fig3B.pdf")
+ggbarplot(hubs, x = "treat", y = "degree",  add = c("mean_se", "jitter")) + labs(x="", y="Degree") + geom_text(data=subset(hubs, Abbreviations == "MS" | Abbreviations == "FS"), aes(label=Abbreviations)) + geom_point(data=subset(hubs, Abbreviations == "MS" | Abbreviations == "FS"), aes(col="red"))
+ggsave("Fig3A.pdf")
+
+shapiro.test(hubs$PC[hubs$treat == "nicotine"])
+shapiro.test(hubs$PC[hubs$treat == "saline"])
+shapiro.test(hubs$betweenness[hubs$treat == "nicotine"])
+shapiro.test(hubs$betweenness[hubs$treat == "saline"])
+shapiro.test(hubs$degree[hubs$treat == "nicotine"])
+shapiro.test(hubs$degree[hubs$treat == "saline"])
+
+wilcox.test(PC ~ treat, data = hubs, paired=FALSE, exact=FALSE, conf.int=TRUE)
+wilcox.test(betweenness ~ treat, data = hubs, paired=FALSE, exact=FALSE, conf.int=TRUE)
+wilcox.test(degree ~ treat, data = hubs, paired=FALSE, exact=FALSE, conf.int=TRUE)
+
+##correlations of hubs with the whole brain
+data_corr_mx_sal <- as.data.frame(as.matrix(corr_mx_sal))
+select_hub_all_corr_mx_sal <- data_corr_mx_sal[c("Cuneiform nucleus", "Parastrial nucleus","Medial septal nucleus", "Fundus of striatum", "Caudoputamen", "Gustatory areas", "Paraventricular hypothalamic nucleus", "Posterolateral visual area"),]
+data_corr_mx_nic <- as.data.frame(as.matrix(corr_mx_nic))
+select_hub_all_corr_mx_nic <- data_corr_mx_nic[c("Cuneiform nucleus", "Parastrial nucleus","Medial septal nucleus", "Fundus of striatum", "Caudoputamen", "Gustatory areas", "Paraventricular hypothalamic nucleus", "Posterolateral visual area"),]
+
+hub_nic_all <- Heatmap(as.matrix(select_hub_all_corr_mx_nic), name = "nic", col = coul_other, heatmap_legend_param = list(at = c(1, 0, -1)),  row_order = c("Cuneiform nucleus", "Parastrial nucleus","Medial septal nucleus", "Fundus of striatum", "Caudoputamen", "Gustatory areas", "Paraventricular hypothalamic nucleus", "Posterolateral visual area"), column_order = columns_region_select, column_split = group, cluster_column_slices = F, row_names_gp = gpar(fontsize = 5),  column_names_gp = gpar(fontsize = 3), row_title_gp = gpar(fontsize = 5), column_title_gp = gpar(fontsize = 5))
+hub_sal_all <- Heatmap(as.matrix(select_hub_all_corr_mx_sal), name = "sal", col = coul_other, heatmap_legend_param = list(at = c(1, 0, -1)), row_order = c("Cuneiform nucleus", "Parastrial nucleus","Medial septal nucleus", "Fundus of striatum", "Caudoputamen", "Gustatory areas", "Paraventricular hypothalamic nucleus", "Posterolateral visual area"), column_order = columns_region_select,  column_split = group, cluster_column_slices = F, row_names_gp = gpar(fontsize = 5),  column_names_gp = gpar(fontsize = 3), row_title_gp = gpar(fontsize = 5), column_title_gp = gpar(fontsize = 5))
+hub_all_nicsal <- hub_sal_all %v% hub_nic_all
+pdf(file = "Fig3D.pdf", height =2.75, width = 10)
+hub_all_nicsal
+dev.off()
+
+#####Figure 4: connect with ISH atlas
+setwd("redacted")
+structures <- read_csv("structure_tree_2017.csv")
+genes <- read_csv("allGeneStructureInfo_allgenes_summary_struct.csv")
+genes_select <- genes[,-(2:3)]
+structures_select <- dplyr::rename(info, acronym = Abbreviations)
+structures_select <- left_join(structures_select, structures, by = "acronym")
+structures_select <- dplyr::rename(structures_select, structure_id = id)
+setwd("redacted")
+
+####CHRN expression
+Chrna1 <- filter(genes, gene_acronym == "Chrna1")
+Chrna2 <- filter(genes, gene_acronym == "Chrna2")
+Chrna3 <- filter(genes, gene_acronym == "Chrna3")
+Chrna4 <- filter(genes, gene_acronym == "Chrna4")
+Chrna5 <- filter(genes, gene_acronym == "Chrna5")
+Chrna6 <- filter(genes, gene_acronym == "Chrna6")
+Chrna7 <- filter(genes, gene_acronym == "Chrna7")
+Chrna9 <- filter(genes, gene_acronym == "Chrna9")
+Chrna10 <- filter(genes, gene_acronym == "Chrna10")
+Chrnb1 <- filter(genes, gene_acronym == "Chrnb1")
+Chrnb2 <- filter(genes, gene_acronym == "Chrnb2")
+Chrnb3 <- filter(genes, gene_acronym == "Chrnb3")
+Chrnd <- filter(genes, gene_acronym == "Chrnd")
+Chat <- filter(genes, gene_acronym == "Chat")
+
+Chrna1_wide <- tidyr::spread(Chrna1, data_set_id, expression_density)
+Chrna1_wide[,(6:7)] <- base::scale(Chrna1_wide[,(6:7)])
+Chrna1_long <- tidyr::gather(Chrna1_wide, key = data_set_id, value = expression_density, 6:7)
+Chrna1_long <- na.omit(Chrna1_long)
+Chrna1_av <- Chrna1_long %>% dplyr::group_by(structure_id) %>% dplyr::summarise(n=n(), mean=mean(expression_density), sd=sd(expression_density), se = sd/sqrt(n))
+Chrna1_struct <- left_join(structures_select, Chrna1_av)
+Chrna1_struct_m <- select(Chrna1_struct, mean) 
+Chrna1_struct_m <- as.data.frame(Chrna1_struct_m) 
+
+Chrna2_wide <- tidyr::spread(Chrna2, data_set_id, expression_density)
+Chrna2_wide[,(6:7)] <- base::scale(Chrna2_wide[,(6:7)])
+Chrna2_long <- tidyr::gather(Chrna2_wide, key = data_set_id, value = expression_density, 6:7)
+Chrna2_long <- na.omit(Chrna2_long)
+Chrna2_av <- Chrna2_long %>% dplyr::group_by(structure_id) %>% dplyr::summarise(n=n(), mean=mean(expression_density), sd=sd(expression_density), se = sd/sqrt(n))
+Chrna2_struct <- left_join(structures_select, Chrna2_av)
+Chrna2_struct_m <- select(Chrna2_struct, mean) 
+Chrna2_struct_m <- as.data.frame(Chrna2_struct_m) 
+
+Chrna3_wide <- tidyr::spread(Chrna3, data_set_id, expression_density)
+Chrna3_wide[,(6:7)] <- base::scale(Chrna3_wide[,(6:7)])
+Chrna3_long <- tidyr::gather(Chrna3_wide, key = data_set_id, value = expression_density, 6:7)
+Chrna3_long <- na.omit(Chrna3_long)
+Chrna3_av <- Chrna3_long %>% dplyr::group_by(structure_id) %>% dplyr::summarise(n=n(), mean=mean(expression_density), sd=sd(expression_density), se = sd/sqrt(n))
+Chrna3_struct <- left_join(structures_select, Chrna3_av)
+Chrna3_struct_m <- select(Chrna3_struct, mean) 
+Chrna3_struct_m <- as.data.frame(Chrna3_struct_m) 
+
+Chrna4_wide <- tidyr::spread(Chrna4, data_set_id, expression_density)
+Chrna4_wide[,(6:8)] <- base::scale(Chrna4_wide[,(6:8)])
+Chrna4_long <- tidyr::gather(Chrna4_wide, key = data_set_id, value = expression_density, 6:8)
+Chrna4_long <- na.omit(Chrna4_long)
+Chrna4_av <- Chrna4_long %>% dplyr::group_by(structure_id) %>% dplyr::summarise(n=n(), mean=mean(expression_density), sd=sd(expression_density), se = sd/sqrt(n))
+Chrna4_struct <- left_join(structures_select, Chrna4_av)
+Chrna4_struct_m <- select(Chrna4_struct, mean) 
+Chrna4_struct_m <- as.data.frame(Chrna4_struct_m) 
+
+Chrna5_wide <- tidyr::spread(Chrna5, data_set_id, expression_density)
+Chrna5_wide[,(6:7)] <- base::scale(Chrna5_wide[,(6:7)])
+Chrna5_long <- tidyr::gather(Chrna5_wide, key = data_set_id, value = expression_density, 6:7)
+Chrna5_long <- na.omit(Chrna5_long)
+Chrna5_av <- Chrna5_long %>% dplyr::group_by(structure_id) %>% dplyr::summarise(n=n(), mean=mean(expression_density), sd=sd(expression_density), se = sd/sqrt(n))
+Chrna5_struct <- left_join(structures_select, Chrna5_av)
+Chrna5_struct_m <- select(Chrna5_struct, mean) 
+Chrna5_struct_m <- as.data.frame(Chrna5_struct_m) 
+
+Chrna6_wide <- tidyr::spread(Chrna6, data_set_id, expression_density)
+Chrna6_wide[,(6:8)] <- base::scale(Chrna6_wide[,(6:8)])
+Chrna6_long <- tidyr::gather(Chrna6_wide, key = data_set_id, value = expression_density, 6:8)
+Chrna6_long <- na.omit(Chrna6_long)
+Chrna6_av <- Chrna6_long %>% dplyr::group_by(structure_id) %>% dplyr::summarise(n=n(), mean=mean(expression_density), sd=sd(expression_density), se = sd/sqrt(n))
+Chrna6_struct <- left_join(structures_select, Chrna6_av)
+Chrna6_struct_m <- select(Chrna6_struct, mean) 
+Chrna6_struct_m <- as.data.frame(Chrna6_struct_m) 
+
+Chrna7_wide <- tidyr::spread(Chrna7, data_set_id, expression_density)
+Chrna7_wide[,(6:7)] <- base::scale(Chrna7_wide[,(6:7)])
+Chrna7_long <- tidyr::gather(Chrna7_wide, key = data_set_id, value = expression_density, 6:7)
+Chrna7_long <- na.omit(Chrna7_long)
+Chrna7_av <- Chrna7_long %>% dplyr::group_by(structure_id) %>% dplyr::summarise(n=n(), mean=mean(expression_density), sd=sd(expression_density), se = sd/sqrt(n))
+Chrna7_struct <- left_join(structures_select, Chrna7_av)
+Chrna7_struct_m <- select(Chrna7_struct, mean) 
+Chrna7_struct_m <- as.data.frame(Chrna7_struct_m) 
+
+Chrna9_wide <- tidyr::spread(Chrna9, data_set_id, expression_density)
+Chrna9_wide[,(6:7)] <- base::scale(Chrna9_wide[,(6:7)])
+Chrna9_long <- tidyr::gather(Chrna9_wide, key = data_set_id, value = expression_density, 6:7)
+Chrna9_long <- na.omit(Chrna9_long)
+Chrna9_av <- Chrna9_long %>% dplyr::group_by(structure_id) %>% dplyr::summarise(n=n(), mean=mean(expression_density), sd=sd(expression_density), se = sd/sqrt(n))
+Chrna9_struct <- left_join(structures_select, Chrna9_av)
+Chrna9_struct_m <- select(Chrna9_struct, mean) 
+Chrna9_struct_m <- as.data.frame(Chrna9_struct_m) 
+
+Chrna10_wide <- tidyr::spread(Chrna10, data_set_id, expression_density)
+Chrna10_wide[,(6:7)] <- base::scale(Chrna10_wide[,(6:7)])
+Chrna10_long <- tidyr::gather(Chrna10_wide, key = data_set_id, value = expression_density, 6:7)
+Chrna10_long <- na.omit(Chrna10_long)
+Chrna10_av <- Chrna10_long %>% dplyr::group_by(structure_id) %>% dplyr::summarise(n=n(), mean=mean(expression_density), sd=sd(expression_density), se = sd/sqrt(n))
+Chrna10_struct <- left_join(structures_select, Chrna10_av)
+Chrna10_struct_m <- select(Chrna10_struct, mean) 
+Chrna10_struct_m <- as.data.frame(Chrna10_struct_m) 
+
+Chrnb1_wide <- tidyr::spread(Chrnb1, data_set_id, expression_density)
+Chrnb1_wide[,(6:8)] <- base::scale(Chrnb1_wide[,(6:8)])
+Chrnb1_long <- tidyr::gather(Chrnb1_wide, key = data_set_id, value = expression_density, 6:8)
+Chrnb1_long <- na.omit(Chrnb1_long)
+Chrnb1_av <- Chrnb1_long %>% dplyr::group_by(structure_id) %>% dplyr::summarise(n=n(), mean=mean(expression_density), sd=sd(expression_density), se = sd/sqrt(n))
+Chrnb1_struct <- left_join(structures_select, Chrnb1_av)
+Chrnb1_struct_m <- select(Chrnb1_struct, mean) 
+Chrnb1_struct_m <- as.data.frame(Chrnb1_struct_m) 
+
+Chrnb2_wide <- tidyr::spread(Chrnb2, data_set_id, expression_density)
+Chrnb2_wide[,(6:9)] <- base::scale(Chrnb2_wide[,(6:9)])
+Chrnb2_long <- tidyr::gather(Chrnb2_wide, key = data_set_id, value = expression_density, 6:9)
+Chrnb2_long <- na.omit(Chrnb2_long)
+Chrnb2_av <- Chrnb2_long %>% dplyr::group_by(structure_id) %>% dplyr::summarise(n=n(), mean=mean(expression_density), sd=sd(expression_density), se = sd/sqrt(n))
+Chrnb2_struct <- left_join(structures_select, Chrnb2_av)
+Chrnb2_struct_m <- select(Chrnb2_struct, mean) 
+Chrnb2_struct_m <- as.data.frame(Chrnb2_struct_m) 
+
+Chrnb3_wide <- tidyr::spread(Chrnb3, data_set_id, expression_density)
+Chrnb3_wide[,(6:7)] <- base::scale(Chrnb3_wide[,(6:7)])
+Chrnb3_long <- tidyr::gather(Chrnb3_wide, key = data_set_id, value = expression_density, 6:7)
+Chrnb3_long <- na.omit(Chrnb3_long)
+Chrnb3_av <- Chrnb3_long %>% dplyr::group_by(structure_id) %>% dplyr::summarise(n=n(), mean=mean(expression_density), sd=sd(expression_density), se = sd/sqrt(n))
+Chrnb3_struct <- left_join(structures_select, Chrnb3_av)
+Chrnb3_struct_m <- select(Chrnb3_struct, mean) 
+Chrnb3_struct_m <- as.data.frame(Chrnb3_struct_m) 
+
+Chrnd_wide <- tidyr::spread(Chrnd, data_set_id, expression_density)
+Chrnd_wide[,(6:7)] <- base::scale(Chrnd_wide[,(6:7)])
+Chrnd_long <- tidyr::gather(Chrnd_wide, key = data_set_id, value = expression_density, 6:7)
+Chrnd_long <- na.omit(Chrnd_long)
+Chrnd_av <- Chrnd_long %>% dplyr::group_by(structure_id) %>% dplyr::summarise(n=n(), mean=mean(expression_density), sd=sd(expression_density), se = sd/sqrt(n))
+Chrnd_struct <- left_join(structures_select, Chrnd_av)
+Chrnd_struct_m <- select(Chrnd_struct, mean) 
+Chrnd_struct_m <- as.data.frame(Chrnd_struct_m) 
+
+Chat_wide <- tidyr::spread(Chat, data_set_id, expression_density)
+Chat_wide[,(6:7)] <- base::scale(Chat_wide[,(6:7)])
+Chat_long <- tidyr::gather(Chat_wide, key = data_set_id, value = expression_density, 6:7)
+Chat_long <- na.omit(Chat_long)
+Chat_av <- Chat_long %>% dplyr::group_by(structure_id) %>% dplyr::summarise(n=n(), mean=mean(expression_density), sd=sd(expression_density), se = sd/sqrt(n))
+Chat_struct <- left_join(structures_select, Chat_av)
+Chat_struct_m <- select(Chat_struct, mean) 
+Chat_struct_m <- as.data.frame(Chat_struct_m) 
+
+nAChR <- cbind(Chrna1_struct_m, Chrna2_struct_m,Chrna3_struct_m,Chrna4_struct_m,Chrna5_struct_m,Chrna6_struct_m,Chrna7_struct_m,Chrna9_struct_m, Chrna10_struct_m,Chrnb1_struct_m,Chrnb2_struct_m,Chrnb3_struct_m,Chrnd_struct_m, Chat_struct_m)
+rownames(nAChR) <- info$region
+colnames(nAChR) <- c("Chrna1","Chrna2", "Chrna3", "Chrna4", "Chrna5", "Chrna6", "Chrna7","Chrna9","Chrna10","Chrnb1","Chrnb2","Chrnb3", "Chrnd","Chat")
+nAChR_NA <- na.omit(nAChR)
+nAChR_NA <- as.matrix(nAChR_NA)
+#par(cex.main = 0.2, cex.lab=0.01, cex.axis = 0.1)
+#heatmap(nAChR_NA, Rowv = NA, cexRow = 0.2)
+
+##CHRNA expression in the whole brain, anatomically organized 
+nAChR <- nAChR[order(row.names(nAChR)), ]
+Chrn_allign <- nAChR[rownames(nAChR) %in% colnames(nic), ]
+Chrn_allign <- t(Chrn_allign)
+pdf(file = "Fig4Amiddle.pdf", height =2.75, width = 10)
+Heatmap(as.matrix(Chrn_allign),  column_order = columns_region_select, column_split = group, cluster_column_slices = F, row_names_gp = gpar(fontsize = 5),  column_names_gp = gpar(fontsize = 3), row_title_gp = gpar(fontsize = 5), column_title_gp = gpar(fontsize = 5))
+dev.off()
+
+##CHRNA expression in the whole brain, modular organized 
+module_nic = modules_nic$module
+module_nic = as.factor(module_nic)
+module_nic = factor(module_nic, levels = c("5", "4", "7", "2", "9", "8", "3", "6", "1"))
+columns_modules_nic <- hm_nic$colInd
+columns_modules_nic <- unlist(columns_modules_nic)
+pdf(file = "Fig4Aleft.pdf", height =2.75, width = 10)
+Heatmap(as.matrix(Chrn_allign),  column_order = columns_modules_nic, column_split = module_nic, row_names_gp = gpar(fontsize = 5),  column_names_gp = gpar(fontsize = 3), row_title_gp = gpar(fontsize = 5), column_title_gp = gpar(fontsize = 5))
+dev.off()
+
+##CHRNA expression for cholinergic regions
+select_chrna <- nAChR[rownames(nAChR) %in%  c("Medial septal nucleus", "Diagonal band nucleus", "Substantia innominata", "Magnocellular nucleus", "Pedunculopontine nucleus", "Medial habenula", "Lateral habenula"),]
+pdf(file = "Fig4Arignt.pdf", height =2, width = 2)
+Heatmap(as.matrix(t(select_chrna)),  row_order = c("Chrnb2", "Chrna4", "Chrnb3","Chrna3", "Chrna2", "Chrna1",  "Chrnd", "Chrna7", "Chat", "Chrna10","Chrnb1", "Chrna9", "Chrna5", "Chrna6"), column_order = c("Medial septal nucleus", "Pedunculopontine nucleus", "Medial habenula", "Lateral habenula", "Magnocellular nucleus", "Diagonal band nucleus", "Substantia innominata"),  row_names_gp = gpar(fontsize = 5),  column_names_gp = gpar(fontsize = 3), row_title_gp = gpar(fontsize = 5), column_title_gp = gpar(fontsize = 5))
+dev.off()
+
+
+####Correlation of gene expression with FOS fold-change
+###Fosfoldchange
+all_long <- rbind(nic_long, sal_long)
+all_sum <- all_long %>% group_by(treatment, Region) %>% summarise(Mean = mean(value), SD=sd(value), SE = sd(value)/sqrt(4))
+all_sum_short <- dcast(all_sum, Region ~ treatment, value.var = "Mean")
+all_sum_short$logfoldchange <- log2(all_sum_short$nicotine/all_sum_short$saline)
+all_sum_short$percentchange <- (all_sum_short$nicotine-all_sum_short$saline)/all_sum_short$saline * 100
+all_sum_short$Region <- reorder(all_sum_short$Region, all_sum_short$logfoldchange)
+colnames(all_sum_short) <- c("region", "nicotine", "saline", "logfoldchange", "percentchange")
+
+###Link
+gene_corr_table <- full_join(structures_select,all_sum_short)
+gene_corr_table <- select(gene_corr_table, region, structure_id, acronym, group, saline, nicotine, logfoldchange, percentchange)
+gene_corr_table <- full_join(gene_corr_table,genes)
+gene_corr_table$set <- paste(gene_corr_table$gene_acronym, gene_corr_table$data_set_id)
+gene_corr_table$set <- as.factor(gene_corr_table$set)
+gene_corr_table_pure <- filter(gene_corr_table, region != "Frontal pole cerebral cortex")
+gene_corr_table_negpure <- filter(gene_corr_table, region == "Frontal pole cerebral cortex")
+
+gene_corr_table_select_pure <- select(gene_corr_table_pure, set, region, logfoldchange,expression_density)
+gene_corr_table_select_pure <- na.omit(gene_corr_table_select_pure)
+gene_corr_table_select_pure <- filter(gene_corr_table_select_pure, set != "Snca 988" & set != "Usp48 151")
+cor_pure <- gene_corr_table_select_pure %>% dplyr::group_by(set) %>% dplyr::summarise(n = n(),  cor = cor(logfoldchange,expression_density, method = "pearson"), p = cor.test(logfoldchange,expression_density, method = "pearson")$p.value)
+cor_pure$FDR <- p.adjust(cor_pure$p, method = "BH")
+ggplot(cor_pure, aes(x=cor)) + geom_histogram(binwidth=0.01) + theme_classic() + xlim(-0.5,0.5)
+ggsave("Fig4C.pdf", height = 4, width = 10)
+
+gene_corr_example <- filter(gene_corr_table_pure, set == "Chrna10 100146050")
+ggplot(gene_corr_example, aes(x=logfoldchange, y=expression_density)) + geom_point() + geom_smooth(method = "lm", se = FALSE) + theme_classic()
+ggsave("Fig4D.pdf")
+
+Significant_gene_corr_pure <- filter(cor_pure, p<0.0001)
+Significant_gene_corr_FDR_pure <- filter(cor_pure, FDR<0.05)
+Significant_gene_corr_FDR_pure$set <- sub(" .*", "", Significant_gene_corr_FDR_pure$set)
+Significant_gene_corr_FDR_pure <- as.data.frame(Significant_gene_corr_FDR_pure)
+Significant_gene_corr_FDR_pure <- Significant_gene_corr_FDR_pure[order(Significant_gene_corr_FDR_pure$p),]
+write.csv(Significant_gene_corr_FDR_pure, "Significant_gene_corr_FDR_5_pure.csv")
